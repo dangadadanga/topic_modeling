@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 from flair.embeddings import FlairEmbeddings, DocumentPoolEmbeddings, BertEmbeddings
 from flair.data import Sentence
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA,IncrementalPCA
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.spatial.distance import euclidean
@@ -100,10 +100,10 @@ def training_pipeline_bert(filepath=None, num_words_to_print=10,prefix=None,min_
   X = torch.empty(size=(len(df.index), 7168)) #.cuda()
   # fill tensor with embeddings
 
-
+  #  for text in tqdm(df['resp_whytfa']):    #df['text_cl']):
   #from tqdm import tqdm - show smart progress meter
   i=0
-  for text in tqdm(df['resp_whytfa']):    #df['text_cl']):
+  for text in df['resp_whytfa']:  
     sentence = Sentence(text)
     document_embeddings.embed(sentence)
     embedding = sentence.get_embedding()
@@ -113,6 +113,7 @@ def training_pipeline_bert(filepath=None, num_words_to_print=10,prefix=None,min_
     if(i>100): 
         break
 
+  print("before the PCA") 
 
   #detach the tensor from the GPU and convert it to a NumPy array
   Y = X.cpu().detach().numpy()
@@ -124,25 +125,34 @@ def training_pipeline_bert(filepath=None, num_words_to_print=10,prefix=None,min_
   #As a side note, I did test a number of clustering algorithms (K-means, BIRCH, DBSCAN, Agglomerative with complete/average affinity), but Ward seems to perform the best in most cases
 
   #reduce the dimensionality of our vectors to length 768  
-  pca = PCA(n_components=768)
+  pca = IncrementalPCA(copy=False,n_components=768,batch_size=1000)
+  #pca = PCA(n_components=768)
   X_red = pca.fit_transform(X)
-   
+  
+  del(X)
+  print("After the fit_transform")
+
   N_CLUSTERS = 5
   # WARD CLUSTER
   ward = AgglomerativeClustering(n_clusters=N_CLUSTERS,
                                affinity='euclidean',
                                linkage='ward')
   pred_ward = ward.fit_predict(X_red)
+  print("After fit_predict")
+
   df['topic'] = pred_ward
   df.to_csv('bert_withtopic.csv')
+  print("Write bert_withtopic.csv")
+
   #get topic composition
-   
   topic_docs = []
   # group text into topic-documents
   for topic in range(N_CLUSTERS):
     topic_docs.append(' '.join(df[df['cluster']==topic]['text_cl'].values))
   # apply function
   df_tfidf = get_top_words(topic_docs, 10)
+  print(f"Top words: df_tfidf")
+
 
   #How good are our topics?
   #We find the centroids of the vectors by averaging them across each topic:
@@ -164,6 +174,7 @@ def training_pipeline_bert(filepath=None, num_words_to_print=10,prefix=None,min_
   #visualise the distribution of distances to the topic centroid
   #The closer the distribution to the left of the graph, the more compact the topic is
   df.to_csv('bert_withtopic_distance.csv')
+  print('Write bert_withtopic_distance.csv')
 
   #topic similarity - how similar the topics are to each other
   #We will construct a euclidean distance matrix between the 10 topic centroids to find the distance between the topic averages
@@ -171,6 +182,11 @@ def training_pipeline_bert(filepath=None, num_words_to_print=10,prefix=None,min_
                                               topic_centroids),
                               index=range(N_CLUSTERS),
                               columns=range(N_CLUSTERS))
+
+  print(f"df_dist_matrix={df_dist_matrix}")
+  with open('df_dist_matrix', 'w') as fout:
+    fout.write(u'#'+'\t'.join(str(e) for e in df_dist_matrix.shape)+'\n')
+    df_dist_matrix.tofile(fout)
 
 
 
